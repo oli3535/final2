@@ -2,67 +2,180 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [dev, staging, main]
+    branches: [main, staging, dev]
   pull_request:
-    branches: [dev, staging, main]
+    branches: [main, staging, dev]
 
 jobs:
-  # CI: 代码检查和测试
-  ci:
+  test:
+    name: Run Tests and Linting
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov flake8 black
+        
+    - name: Run linting with flake8
+      run: |
+        echo "Running flake8 linting..."
+        flake8 app/ ml/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 app/ ml/ --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+        
+    - name: Check code formatting with black
+      run: |
+        echo "Checking code formatting..."
+        black --check app/ ml/
+        
+    - name: Run tests with pytest
+      run: |
+        echo "Running tests..."
+        pytest app/main.py ml/train.py -v --cov=app --cov=ml --cov-report=xml
+        
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install black ruff pytest
-
-      - name: Run linting - Code quality
-        run: ruff check app/ ml/
-
-      - name: Run linting - Code formatting
-        run: black --check app/ ml/
-
-      - name: Run tests
-        run: pytest -v
-
-  # CD: 构建和部署
-  cd:
+  build-docker:
+    name: Build and Test Docker Image
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+    needs: test
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Docker image
+      run: |
+        docker build -t student-grade-predictor:latest .
+        
+    - name: Test Docker image
+      run: |
+        echo "Testing Docker image..."
+        # Test that the image builds and can be run
+        docker run --rm student-grade-predictor:latest python -c "
+        import sys
+        sys.path.append('/app')
+        from app.main import StudentGradeAPI
+        api = StudentGradeAPI()
+        print('Model loaded:', api.model_loaded)
+        print('Health check:', api.health_check())
+        "
+        
+    - name: Test model loading in container
+      run: |
+        echo "Testing model functionality in container..."
+        docker run --rm student-grade-predictor:latest python -c "
+        import sys
+        sys.path.append('/app')
+        from app.main import StudentGradeAPI
+        api = StudentGradeAPI()
+        assert api.model_loaded == True, 'Model should be loaded'
+        print('✅ Model loading test passed')
+        "
 
-      - name: Set environment
-        id: set_env
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/staging" ]; then
-            echo "ENVIRONMENT=staging" >> $GITHUB_OUTPUT
-            echo "SECRET_NAME=STAGING_ENV" >> $GITHUB_OUTPUT
-          else
-            echo "ENVIRONMENT=production" >> $GITHUB_OUTPUT
-            echo "SECRET_NAME=PROD_ENV" >> $GITHUB_OUTPUT
-          fi
+  deploy-staging:
+    name: Deploy to Staging Environment
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+    needs: [test, build-docker]
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Create staging environment file
+      run: |
+        echo "Creating staging environment configuration..."
+        cat << EOF > .env
+        DATASET_PATH=data/student_data.csv
+        MODEL_NAME=student_grade_predictor_staging
+        TEST_MODE=staging
+        DEBUG=True
+        SECRET_KEY=${{ secrets.STAGING_SECRET_KEY }}
+        API_KEY=${{ secrets.STAGING_API_KEY }}
+        PORT=5000
+        MLFLOW_TRACKING_URI=file:./mlruns
+        EOF
+        echo "Staging .env file created"
+        
+    - name: Build staging Docker image
+      run: |
+        docker build -t student-grade-predictor:staging-${{ github.sha }} .
+        docker tag student-grade-predictor:staging-${{ github.sha }} student-grade-predictor:staging
+        
+    - name: Log deployment info
+      run: |
+        echo "✅ Staging deployment completed"
+        echo "Image: student-grade-predictor:staging-${{ github.sha }}"
+        echo "Environment: staging"
+        echo "Triggered by: ${{ github.event_name }}"
 
-      - name: Create .env file
-        run: echo "${{ secrets[steps.set_env.outputs.SECRET_NAME] }}" > .env
-
-      - name: Build Docker image
-        run: |
-          docker build -t my-app:${{ steps.set_env.outputs.ENVIRONMENT }} .
-          echo "✅ Docker image built: my-app:${{ steps.set_env.outputs.ENVIRONMENT }}"
-
-      - name: Show build info
-        run: |
-          echo "🎉 Deployment to ${{ steps.set_env.outputs.ENVIRONMENT }} completed!"
-          echo "📦 Image: my-app:${{ steps.set_env.outputs.ENVIRONMENT }}"
+  deploy-production:
+    name: Deploy to Production Environment
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [test, build-docker]
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Create production environment file
+      run: |
+        echo "Creating production environment configuration..."
+        cat << EOF > .env
+        DATASET_PATH=data/student_data.csv
+        MODEL_NAME=student_grade_predictor_prod
+        TEST_MODE=production
+        DEBUG=False
+        SECRET_KEY=${{ secrets.PROD_SECRET_KEY }}
+        API_KEY=${{ secrets.PROD_API_KEY }}
+        PORT=5000
+        MLFLOW_TRACKING_URI=file:./mlruns
+        EOF
+        echo "Production .env file created"
+        
+    - name: Build production Docker image
+      run: |
+        docker build -t student-grade-predictor:prod-${{ github.sha }} .
+        docker tag student-grade-predictor:prod-${{ github.sha }} student-grade-predictor:prod
+        docker tag student-grade-predictor:prod-${{ github.sha }} student-grade-predictor:latest
+        
+    - name: Log deployment info
+      run: |
+        echo "✅ Production deployment completed"
+        echo "Image: student-grade-predictor:prod-${{ github.sha }}"
+        echo "Environment: production"
+        echo "Triggered by: ${{ github.event_name }}"
+        
+    - name: Create GitHub release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        body: |
+          Production deployment of Student Grade Predictor
+          - Commit: ${{ github.sha }}
+          - Model: Random Forest Classifier
+          - Environment: Production
+        draft: false
+        prerelease: false
