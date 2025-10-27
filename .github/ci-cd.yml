@@ -1,0 +1,69 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [dev, staging, main]
+  pull_request:
+    branches: [dev, staging, main]
+
+jobs:
+  # CI: 代码检查和测试
+  ci:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install black ruff pytest
+
+      - name: Code linting with Ruff
+        run: ruff check app/ ml/
+
+      - name: Code formatting with Black
+        run: black --check app/ ml/
+
+      - name: Run tests
+        run: pytest
+
+  # CD: 构建和部署
+  cd:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    strategy:
+      matrix:
+        include:
+          - branch: staging
+            environment: staging
+            secret: STAGING_ENV
+          - branch: main
+            environment: production
+            secret: PROD_ENV
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: echo "${{ secrets[matrix.secret] }}" > .env
+
+      - name: Build Docker image
+        run: |
+          docker build -t my-app:${{ matrix.environment }} .
+          echo "✅ Docker image built: my-app:${{ matrix.environment }}"
+
+      - name: Show build info
+        run: |
+          echo "🎉 Deployment to ${{ matrix.environment }} completed!"
+          echo "📦 Image: my-app:${{ matrix.environment }}"
+          echo "🔗 Branch: ${{ github.ref }}"
