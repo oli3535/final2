@@ -3,3 +3,5 @@
 .pytest_cache/
 .env
 .vscode/
+data/student_data.csv
+data/student_data_v2.csv
