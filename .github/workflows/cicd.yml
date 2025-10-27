@@ -10,7 +10,6 @@ jobs:
   # CI: 代码检查和测试
   ci:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     
     steps:
       - name: Checkout code
@@ -26,44 +25,44 @@ jobs:
           pip install -r requirements.txt
           pip install black ruff pytest
 
-      - name: Code linting with Ruff
+      - name: Run linting - Code quality
         run: ruff check app/ ml/
 
-      - name: Code formatting with Black
+      - name: Run linting - Code formatting
         run: black --check app/ ml/
 
       - name: Run tests
-        run: pytest
+        run: pytest -v
 
   # CD: 构建和部署
   cd:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    
-    strategy:
-      matrix:
-        include:
-          - branch: staging
-            environment: staging
-            secret: STAGING_ENV
-          - branch: main
-            environment: production
-            secret: PROD_ENV
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set environment
+        id: set_env
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/staging" ]; then
+            echo "ENVIRONMENT=staging" >> $GITHUB_OUTPUT
+            echo "SECRET_NAME=STAGING_ENV" >> $GITHUB_OUTPUT
+          else
+            echo "ENVIRONMENT=production" >> $GITHUB_OUTPUT
+            echo "SECRET_NAME=PROD_ENV" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create .env file
-        run: echo "${{ secrets[matrix.secret] }}" > .env
+        run: echo "${{ secrets[steps.set_env.outputs.SECRET_NAME] }}" > .env
 
       - name: Build Docker image
         run: |
-          docker build -t my-app:${{ matrix.environment }} .
-          echo "✅ Docker image built: my-app:${{ matrix.environment }}"
+          docker build -t my-app:${{ steps.set_env.outputs.ENVIRONMENT }} .
+          echo "✅ Docker image built: my-app:${{ steps.set_env.outputs.ENVIRONMENT }}"
 
       - name: Show build info
         run: |
-          echo "🎉 Deployment to ${{ matrix.environment }} completed!"
-          echo "📦 Image: my-app:${{ matrix.environment }}"
-          echo "🔗 Branch: ${{ github.ref }}"
+          echo "🎉 Deployment to ${{ steps.set_env.outputs.ENVIRONMENT }} completed!"
+          echo "📦 Image: my-app:${{ steps.set_env.outputs.ENVIRONMENT }}"
