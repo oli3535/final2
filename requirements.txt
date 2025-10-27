@@ -1,21 +1,13 @@
-# Web Framework
-flask==2.3.3
-
 # Machine Learning Core
 scikit-learn==1.3.0
 numpy==1.24.3
 pandas==2.0.3
 
-# MLOps - MLflow (核心组件)
+# MLOps
 mlflow==2.8.1
-mlflow-skinny==2.8.1  # 轻量级版本，可选
-
-# Database Support for MLflow Model Registry
-sqlalchemy==2.0.23
-sqlite3  # 通常Python内置
 
 # Data Version Control
-dvc==3.0.0  # 基础版本，不包含云提供商特定依赖
+dvc==3.0.0
 
 # Testing
 pytest==7.4.0
@@ -24,12 +16,14 @@ pytest-cov==4.1.0
 # Code Quality
 flake8==6.0.0
 black==23.7.0
-pylint==2.17.4
 
 # Environment & Configuration
 python-dotenv==1.0.0
 pyyaml==6.0
 
-# Visualization (for MLflow plots)
+# Visualization
 matplotlib==3.7.2
 seaborn==0.12.2
+
+# Database (for MLflow)
+sqlalchemy==2.0.23
