@@ -1,23 +1,41 @@
-FROM python:3.11-slim
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# 先复制 requirements.txt
-COPY requirements.txt .
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# 安装依赖
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 然后复制其他文件
+# Copy application code
 COPY app/ ./app/
 COPY ml/ ./ml/
+COPY data/ ./data/
+COPY .env ./
 
-# 设置环境变量
+# Create necessary directories
+RUN mkdir -p ml/registry mlruns
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Set Python path
 ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
 
-# 暴露端口
-EXPOSE 8000
+# Expose port (if needed for health checks)
+EXPOSE 5000
 
-# 启动应用
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "from app.main import StudentGradeAPI; api = StudentGradeAPI(); exit(0 if api.model_loaded else 1)"
+
+# Run application
 CMD ["python", "app/main.py"]
